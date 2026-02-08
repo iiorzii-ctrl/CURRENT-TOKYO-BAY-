@@ -7,14 +7,14 @@ from webdriver_manager.chrome import ChromeDriverManager
 from webdriver_manager.core.os_manager import ChromeType
 import time
 
+# --- Page Layout ---
 st.set_page_config(layout="wide", page_title="Tide Forecast Tool")
 
-# (中略: 前回のCSS設定をそのまま維持)
 st.markdown("""
     <style>
     .main .block-container { padding: 0.5rem 0.5rem !important; max-width: 100% !important; }
     h1 { font-size: 1.5rem !important; margin: 0 !important; padding: 0 !important; }
-    .hour-label { font-size: 1.6rem; font-weight: bold; text-align: center; margin-bottom: 2px; border-bottom: 3px solid #005bac; }
+    .hour-label { font-size: 1.8rem; font-weight: bold; text-align: center; margin-bottom: 5px; border-bottom: 3px solid #005bac; }
     @media print {
         header, .stDeployButton, .stButton, div[data-testid="stNumberInput"], 
         .stInfo, .stSuccess, .stAlert, [data-testid="stForm"], .no-print, footer, [data-testid="stHeader"] {
@@ -28,7 +28,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("Tide Current Forecast")
+st.title("Tide Current Forecast - 3H")
 
 with st.container():
     c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1, 2])
@@ -44,7 +44,6 @@ if btn:
     progress = st.empty()
     cols = st.columns(3, gap="small")
     
-    # --- 【重要】ここをクラウド（Linux）対応に変更 ---
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
@@ -52,36 +51,46 @@ if btn:
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1200,1800")
     
-    # クラウド環境ではchromiumを利用するように設定
-    driver = webdriver.Chrome(
-        service=Service(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()),
-        options=options
-    )
-    # ----------------------------------------------
-
     try:
+        driver = webdriver.Chrome(
+            service=Service(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()),
+            options=options
+        )
+
         for i in range(3):
             target_h = (hh + i) % 24
-            progress.text(f"Fetching: {target_h:02d}:00...")
-            url = f"https://www1.kaiho.mlit.go.jp/TIDE/pred2/cgi-bin/CurrPredCgi_K.cgi?area=01&yy={yy}&mm={mm}&dd={dd}&hh={target_h}"
-            driver.get(url)
+            progress.text(f"Processing: {target_h:02d}:00...")
             
-            try:
-                submit = driver.find_element(By.CSS_SELECTOR, "input[type='submit']")
-                submit.click()
-                time.sleep(3) # ネット回線を考慮して少し長めに待機
-                
-                img_element = driver.find_element(By.TAG_NAME, "img")
-                img_bytes = img_element.screenshot_as_png
-                
-                with cols[i]:
-                    st.markdown(f'<div class="hour-label">{target_h:02d}:00</div>', unsafe_allow_html=True)
-                    st.image(img_bytes, use_container_width=True)
-            except:
-                cols[i].error(f"Error: {target_h:02d}:00")
+            # 入力画面を読み込む
+            driver.get("https://www1.kaiho.mlit.go.jp/TIDE/pred2/cgi-bin/CurrPredCgi_K.cgi?area=01")
+            
+            # フォームを直接書き換える（ここが重要！）
+            driver.find_element(By.NAME, "yy").clear()
+            driver.find_element(By.NAME, "yy").send_keys(str(yy))
+            driver.find_element(By.NAME, "mm").clear()
+            driver.find_element(By.NAME, "mm").send_keys(str(mm))
+            driver.find_element(By.NAME, "dd").clear()
+            driver.find_element(By.NAME, "dd").send_keys(str(dd))
+            driver.find_element(By.NAME, "hh").clear()
+            driver.find_element(By.NAME, "hh").send_keys(str(target_h))
+            
+            # 推算実行ボタンをクリック
+            driver.find_element(By.CSS_SELECTOR, "input[type='submit']").click()
+            time.sleep(3) # 描画待ち
+            
+            # 画像を撮影
+            img_element = driver.find_element(By.TAG_NAME, "img")
+            img_bytes = img_element.screenshot_as_png
+            
+            with cols[i]:
+                st.markdown(f'<div class="hour-label">{target_h:02d}:00</div>', unsafe_allow_html=True)
+                st.image(img_bytes, use_container_width=True)
                 
         progress.empty()
-        st.success("✅ Ready to print! Press Ctrl + P.")
+        st.success("✅ Success! Ready to print.")
         
+    except Exception as e:
+        st.error(f"Error: {e}")
     finally:
-        driver.quit()
+        if 'driver' in locals():
+            driver.quit()
