@@ -43,7 +43,6 @@ with st.container():
         st.write(" ")
         btn = st.button("RUN FORECAST", use_container_width=True)
 
-# ブラウザ起動用の設定関数
 def create_driver():
     options = Options()
     options.add_argument("--headless")
@@ -57,32 +56,42 @@ def create_driver():
     )
 
 if btn:
-    progress_bar = st.progress(0)
+    progress_text = st.empty()
     cols = st.columns(3, gap="small")
     
-    # 3時間分ループ
     for i in range(3):
         target_h = (hh_val + i) % 24
-        progress_bar.progress((i + 1) / 3, text=f"Fetching {target_h:02d}:00 (Attempt {i+1}/3)...")
+        progress_text.text(f"Fetching {target_h:02d}:00 (Step {i+1}/3)...")
         
-        # --- ここが重要：毎回「新しいブラウザ」を作る ---
         driver = create_driver()
-        
         try:
-            # 1. 入力画面を開く
-            url = f"https://www1.kaiho.mlit.go.jp/TIDE/pred2/cgi-bin/CurrPredCgi_K.cgi?area=01&yy={yy_val}&mm={mm_val}&dd={dd_val}&hh={target_h}"
-            driver.get(url)
+            # 1. パラメータなしの「真っさらな」入力ページを開く
+            driver.get("https://www1.kaiho.mlit.go.jp/TIDE/pred2/cgi-bin/CurrPredCgi_K.cgi?area=01")
             
-            # 2. 推算ボタンをクリック（JCGサイトはこの操作で画像が生成される）
-            wait = WebDriverWait(driver, 25)
-            submit_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='submit']")))
+            # 2. フォームが見つかるまで待機
+            wait = WebDriverWait(driver, 30)
+            wait.until(EC.presence_of_element_located((By.NAME, "yy")))
+
+            # 3. キーボード入力で数字を打ち込む（これが一番確実！）
+            def fill(name, val):
+                el = driver.find_element(By.NAME, name)
+                el.clear()
+                el.send_keys(str(val))
+
+            fill("yy", yy_val)
+            fill("mm", mm_val)
+            fill("dd", dd_val)
+            fill("hh", target_h)
+
+            # 4. 推算ボタンをクリック
+            submit_btn = driver.find_element(By.CSS_SELECTOR, "input[type='submit']")
             submit_btn.click()
-            
-            # 3. 画像が表示されるまでしっかり待機
-            time.sleep(6) 
+
+            # 5. 画像が生成されるのを待つ
+            time.sleep(7) # サーバーが図を作る時間をしっかり確保
             wait.until(EC.presence_of_element_located((By.TAG_NAME, "img")))
-            
-            # 4. スクリーンショット撮影
+
+            # 6. 画像を撮影
             img_element = driver.find_element(By.TAG_NAME, "img")
             img_bytes = img_element.screenshot_as_png
             
@@ -92,10 +101,8 @@ if btn:
                 
         except Exception as e:
             cols[i].error(f"Error at {target_h:02d}:00")
-            st.write(f"Technical Log: {e}")
         finally:
-            # ブラウザを完全に閉じる（セッション破棄）
             driver.quit()
             
-    progress_bar.empty()
-    st.success("✅ Complete! Check the legend inside images. Press Ctrl + P.")
+    progress_text.empty()
+    st.success("✅ Success! Legend updated. Press Ctrl + P.")
