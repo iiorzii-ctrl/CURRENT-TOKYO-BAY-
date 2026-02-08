@@ -43,57 +43,46 @@ with st.container():
         st.write(" ")
         btn = st.button("RUN FORECAST", use_container_width=True)
 
-if btn:
-    progress = st.empty()
-    cols = st.columns(3, gap="small")
-    
+# ブラウザ起動用の設定関数
+def create_driver():
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1200,1800")
-    
-    try:
-        driver = webdriver.Chrome(
-            service=Service(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()),
-            options=options
-        )
+    return webdriver.Chrome(
+        service=Service(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()),
+        options=options
+    )
 
-        for i in range(3):
-            target_h = (hh_val + i) % 24
-            progress.text(f"Fetching: {target_h:02d}:00 (Step {i+1}/3)...")
+if btn:
+    progress_bar = st.progress(0)
+    cols = st.columns(3, gap="small")
+    
+    # 3時間分ループ
+    for i in range(3):
+        target_h = (hh_val + i) % 24
+        progress_bar.progress((i + 1) / 3, text=f"Fetching {target_h:02d}:00 (Attempt {i+1}/3)...")
+        
+        # --- ここが重要：毎回「新しいブラウザ」を作る ---
+        driver = create_driver()
+        
+        try:
+            # 1. 入力画面を開く
+            url = f"https://www1.kaiho.mlit.go.jp/TIDE/pred2/cgi-bin/CurrPredCgi_K.cgi?area=01&yy={yy_val}&mm={mm_val}&dd={dd_val}&hh={target_h}"
+            driver.get(url)
             
-            # 【重要】以前の時間の記憶（Cookie）を完全に消去する
-            driver.delete_all_cookies()
+            # 2. 推算ボタンをクリック（JCGサイトはこの操作で画像が生成される）
+            wait = WebDriverWait(driver, 25)
+            submit_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='submit']")))
+            submit_btn.click()
             
-            # 1. まず入力ページを読み込む
-            driver.get("https://www1.kaiho.mlit.go.jp/TIDE/pred2/cgi-bin/CurrPredCgi_K.cgi?area=01")
-            
-            # 2. 入力ボックスが現れるまで待つ
-            wait = WebDriverWait(driver, 20)
-            yy_field = wait.until(EC.presence_of_element_located((By.NAME, "yy")))
-            
-            # 3. フォームに値を直接入力
-            yy_field.clear()
-            yy_field.send_keys(str(yy_val))
-            driver.find_element(By.NAME, "mm").clear()
-            driver.find_element(By.NAME, "mm").send_keys(str(mm_val))
-            driver.find_element(By.NAME, "dd").clear()
-            driver.find_element(By.NAME, "dd").send_keys(str(dd_val))
-            driver.find_element(By.NAME, "hh").clear()
-            driver.find_element(By.NAME, "hh").send_keys(str(target_h))
-            
-            # 4. 推算ボタンをクリック
-            driver.find_element(By.CSS_SELECTOR, "input[type='submit']").click()
-            
-            # 5. 画像が出るまで待機
+            # 3. 画像が表示されるまでしっかり待機
+            time.sleep(6) 
             wait.until(EC.presence_of_element_located((By.TAG_NAME, "img")))
             
-            # サーバー側が画像を描画しきるまで少し余裕を持たせる（ここが短いと同じ画像になりやすい）
-            time.sleep(5) 
-            
-            # 6. 画像を撮影
+            # 4. スクリーンショット撮影
             img_element = driver.find_element(By.TAG_NAME, "img")
             img_bytes = img_element.screenshot_as_png
             
@@ -101,12 +90,12 @@ if btn:
                 st.markdown(f'<div class="hour-label">{target_h:02d}:00</div>', unsafe_allow_html=True)
                 st.image(img_bytes, use_container_width=True)
                 
-        progress.empty()
-        st.success("✅ Ready to print! Press Ctrl + P.")
-        
-    except Exception as e:
-        st.error(f"Something went wrong. Please try clicking the button again.")
-        # st.write(f"Technical Log: {e}") # デバッグ用
-    finally:
-        if 'driver' in locals():
+        except Exception as e:
+            cols[i].error(f"Error at {target_h:02d}:00")
+            st.write(f"Technical Log: {e}")
+        finally:
+            # ブラウザを完全に閉じる（セッション破棄）
             driver.quit()
+            
+    progress_bar.empty()
+    st.success("✅ Complete! Check the legend inside images. Press Ctrl + P.")
