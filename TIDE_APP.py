@@ -14,12 +14,9 @@ st.set_page_config(layout="wide", page_title="Tide Forecast Tool")
 
 st.markdown("""
     <style>
-    /* 通常表示の余白 */
     .main .block-container { padding: 0.5rem 0.5rem !important; max-width: 100% !important; }
     h1 { font-size: 1.5rem !important; margin: 0 !important; }
     .hour-label { font-size: 1.8rem; font-weight: bold; text-align: center; margin-bottom: 5px; border-bottom: 3px solid #005bac; }
-    
-    /* 印刷用CSS: 余計なものを消し、2ページ目に行かないようにする */
     @media print {
         header, .stDeployButton, .stButton, div[data-testid="stNumberInput"], 
         .stInfo, .stSuccess, .stAlert, [data-testid="stForm"], .no-print, footer, [data-testid="stHeader"] {
@@ -36,7 +33,6 @@ st.markdown("""
 
 st.title("Tide Current Forecast - 3H")
 
-# 入力フォーム
 with st.container():
     c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1, 2])
     with c1: yy_val = st.number_input("Year", value=2026)
@@ -66,20 +62,38 @@ if btn:
 
         for i in range(3):
             target_h = (hh_val + i) % 24
-            progress.text(f"Fetching: {target_h:02d}:00...")
+            progress.text(f"Fetching: {target_h:02d}:00 (Step {i+1}/3)...")
             
-            # 【解決策】URLに直接パラメータを詰め込むことで、フォーム入力をスキップします
-            direct_url = f"https://www1.kaiho.mlit.go.jp/TIDE/pred2/cgi-bin/CurrPredCgi_K.cgi?area=01&yy={yy_val}&mm={mm_val}&dd={dd_val}&hh={target_h}"
-            driver.get(direct_url)
+            # 【重要】以前の時間の記憶（Cookie）を完全に消去する
+            driver.delete_all_cookies()
             
-            # 画像が表示されるまで最大20秒待機
+            # 1. まず入力ページを読み込む
+            driver.get("https://www1.kaiho.mlit.go.jp/TIDE/pred2/cgi-bin/CurrPredCgi_K.cgi?area=01")
+            
+            # 2. 入力ボックスが現れるまで待つ
             wait = WebDriverWait(driver, 20)
+            yy_field = wait.until(EC.presence_of_element_located((By.NAME, "yy")))
+            
+            # 3. フォームに値を直接入力
+            yy_field.clear()
+            yy_field.send_keys(str(yy_val))
+            driver.find_element(By.NAME, "mm").clear()
+            driver.find_element(By.NAME, "mm").send_keys(str(mm_val))
+            driver.find_element(By.NAME, "dd").clear()
+            driver.find_element(By.NAME, "dd").send_keys(str(dd_val))
+            driver.find_element(By.NAME, "hh").clear()
+            driver.find_element(By.NAME, "hh").send_keys(str(target_h))
+            
+            # 4. 推算ボタンをクリック
+            driver.find_element(By.CSS_SELECTOR, "input[type='submit']").click()
+            
+            # 5. 画像が出るまで待機
             wait.until(EC.presence_of_element_located((By.TAG_NAME, "img")))
             
-            # サーバー側での図の生成完了を待つため、少し余裕を持たせます
-            time.sleep(4)
+            # サーバー側が画像を描画しきるまで少し余裕を持たせる（ここが短いと同じ画像になりやすい）
+            time.sleep(5) 
             
-            # 図の部分を撮影
+            # 6. 画像を撮影
             img_element = driver.find_element(By.TAG_NAME, "img")
             img_bytes = img_element.screenshot_as_png
             
@@ -91,8 +105,8 @@ if btn:
         st.success("✅ Ready to print! Press Ctrl + P.")
         
     except Exception as e:
-        st.error(f"Error occurred. Please wait a moment and try again.")
-        st.write(f"Details: {e}")
+        st.error(f"Something went wrong. Please try clicking the button again.")
+        # st.write(f"Technical Log: {e}") # デバッグ用
     finally:
         if 'driver' in locals():
             driver.quit()
