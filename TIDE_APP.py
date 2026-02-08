@@ -9,7 +9,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 from webdriver_manager.core.os_manager import ChromeType
 import time
 
-# --- Layout Setup ---
+# --- ページ設定（余白を削って画像を最大化） ---
 st.set_page_config(layout="wide", page_title="Tide Forecast Tool")
 
 st.markdown("""
@@ -35,14 +35,15 @@ st.title("Tide Current Forecast - 3H")
 
 with st.container():
     c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1, 2])
-    with c1: yy_val = st.number_input("Year", value=2026)
-    with c2: mm_val = st.number_input("Month", value=2, min_value=1, max_value=12)
-    with c3: dd_val = st.number_input("Day", value=8, min_value=1, max_value=31)
-    with c4: hh_val = st.number_input("Hour", value=15, min_value=0, max_value=23)
+    with c1: yy = st.number_input("Year", value=2026)
+    with c2: mm = st.number_input("Month", value=2, min_value=1, max_value=12)
+    with c3: dd = st.number_input("Day", value=8, min_value=1, max_value=31)
+    with c4: hh = st.number_input("Hour", value=15, min_value=0, max_value=23)
     with c5:
         st.write(" ")
         btn = st.button("RUN FORECAST", use_container_width=True)
 
+# ブラウザ起動設定
 def create_driver():
     options = Options()
     options.add_argument("--headless")
@@ -50,6 +51,9 @@ def create_driver():
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1200,1800")
+    # キャッシュを無効化
+    options.add_argument("--disk-cache-size=1")
+    options.add_argument("--media-cache-size=1")
     return webdriver.Chrome(
         service=Service(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()),
         options=options
@@ -60,38 +64,35 @@ if btn:
     cols = st.columns(3, gap="small")
     
     for i in range(3):
-        target_h = (hh_val + i) % 24
-        progress_text.text(f"Fetching {target_h:02d}:00 (Step {i+1}/3)...")
+        target_h = (hh + i) % 24
+        progress_text.text(f"Fetching {target_h:02d}:00 (Attempt {i+1}/3)...")
         
+        # 【重要】1枚ごとにブラウザを完全に新しく作り、セッションを隔離する
         driver = create_driver()
         try:
-            # 1. パラメータなしの「真っさらな」入力ページを開く
+            # 1. 入力ページを開く
             driver.get("https://www1.kaiho.mlit.go.jp/TIDE/pred2/cgi-bin/CurrPredCgi_K.cgi?area=01")
             
-            # 2. フォームが見つかるまで待機
+            # 2. ページが読み込まれるのを待つ
             wait = WebDriverWait(driver, 30)
             wait.until(EC.presence_of_element_located((By.NAME, "yy")))
-
-            # 3. キーボード入力で数字を打ち込む（これが一番確実！）
-            def fill(name, val):
-                el = driver.find_element(By.NAME, name)
-                el.clear()
-                el.send_keys(str(val))
-
-            fill("yy", yy_val)
-            fill("mm", mm_val)
-            fill("dd", dd_val)
-            fill("hh", target_h)
-
-            # 4. 推算ボタンをクリック
-            submit_btn = driver.find_element(By.CSS_SELECTOR, "input[type='submit']")
-            submit_btn.click()
-
-            # 5. 画像が生成されるのを待つ
-            time.sleep(7) # サーバーが図を作る時間をしっかり確保
+            
+            # 3. JavaScriptを使って値を強制的にセットし、フォームを送信する
+            # これにより「キー入力が遅れる」というミスを物理的に排除します
+            script = f"""
+                document.getElementsByName('yy')[0].value = '{yy}';
+                document.getElementsByName('mm')[0].value = '{mm}';
+                document.getElementsByName('dd')[0].value = '{dd}';
+                document.getElementsByName('hh')[0].value = '{target_h}';
+                document.forms[0].submit();
+            """
+            driver.execute_script(script)
+            
+            # 4. 画像が表示されるまでしっかり待機（サーバー側の描画時間）
+            time.sleep(8) 
             wait.until(EC.presence_of_element_located((By.TAG_NAME, "img")))
-
-            # 6. 画像を撮影
+            
+            # 5. 画像を撮影
             img_element = driver.find_element(By.TAG_NAME, "img")
             img_bytes = img_element.screenshot_as_png
             
@@ -102,7 +103,7 @@ if btn:
         except Exception as e:
             cols[i].error(f"Error at {target_h:02d}:00")
         finally:
-            driver.quit()
+            driver.quit() # セッションを完全に破棄
             
     progress_text.empty()
-    st.success("✅ Success! Legend updated. Press Ctrl + P.")
+    st.success("✅ Success! Check the internal legend. Press Ctrl + P.")
